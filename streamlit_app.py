@@ -1,3 +1,12 @@
+import streamlit as st
+import pandas as pd
+import io
+import zipfile
+
+# --- IMPORT YOUR CUSTOM FUNCTIONS HERE ---
+# (Make sure these functions are defined above or imported from another file)
+# from your_module import get_driver, clean_whitespace, split_asked_name, get_first_person_id, get_thesis_id_from_person_page, get_fallback_thesis_id, get_xml_from_thesis_id, extract_fields_from_xml
+
 # --- USER INTERFACE ---
 # A large text box for copying and pasting names directly
 names_input = st.text_area(
@@ -103,5 +112,3 @@ if names_input.strip():
         )
 else:
     st.warning("👈 Please copy and paste your student names into the text field above to unlock the extraction pipeline.")
-
-
