@@ -17,12 +17,15 @@ from selenium.webdriver.support import expected_conditions as EC
 # =====================================================================
 
 def get_driver():
+    """Sets up a headless Chromium driver compatible with Streamlit Cloud."""
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    
+    # Standard location for Chromium on Streamlit Cloud Debian environment
     options.binary_location = "/usr/bin/chromium"
     return webdriver.Chrome(options=options)
 
@@ -65,7 +68,7 @@ def get_first_person_id(driver, name, log_callback):
         href = a["href"]
         if re.match(r"^/\d{9}$", href):
             person_id = href[1:]
-            log_callback(f"🎯 **Success:** Person Profile found ID `[{person_id}]`")
+            log_callback(f"cn🎯 **Success:** Person Profile found ID `[{person_id}]`")
             return person_id
 
     idref_matches = re.findall(r'"idRef"\s*:\s*"(\d{9})"', html_source) or re.findall(r'/(\d{9})', html_source)
@@ -211,9 +214,9 @@ def extract_fields_from_xml(xml_text, asked_name, thesis_id, log_callback):
 st.set_page_config(page_title="Thesis Extraction Pipeline", layout="wide")
 st.title("🎓 Theses.fr Metadata Extraction Pipeline")
 
-# We manage state so data stays visible if the user presses "Stop"
-if "scraped_rows" not in st.session_storage:
-    st.session_storage["scraped_rows"] = []
+# Correct session handling state setup
+if "scraped_rows" not in st.session_state:
+    st.session_state["scraped_rows"] = []
 
 with st.form("unlocked_pipeline_form"):
     names_input = st.text_area(
@@ -224,12 +227,12 @@ with st.form("unlocked_pipeline_form"):
     BATCH_SIZE = st.number_input("Batch packaging file split size", min_value=1, max_value=100, value=10)
     submit_button = st.form_submit_button("🚀 Start Web Scraping Pipeline")
 
-# Add a prominent stop toggle option outside the input form
+# Checkbox element allows pausing/stopping mid-loop safely
 stop_pipeline = st.checkbox("🛑 Emergency Stop Processing Loop")
 
 if submit_button and names_input.strip():
-    # Reset storage on a fresh submit
-    st.session_storage["scraped_rows"] = []
+    # Initialize/Reset persistent data on new submission
+    st.session_state["scraped_rows"] = []
     
     raw_names = [line.strip() for line in names_input.splitlines() if line.strip()]
     total = len(raw_names)
@@ -244,10 +247,7 @@ if submit_button and names_input.strip():
     ]
     
     progress_bar = st.progress(0)
-    
-    # Placeholders for live updates
-    status_msg = st.empty()
-    table_placeholder = st.empty()  # This houses the LIVE expanding table data
+    table_placeholder = st.empty()  # Instantiating the placeholder for the real-time layout matrix
     
     with st.status("🕵️‍♂️ Extraction Engine Activity Terminal...", expanded=True) as status_container:
         status_container.write("Initializing secure cloud browser instance...")
@@ -263,7 +263,7 @@ if submit_button and names_input.strip():
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             try:
                 for index, raw_name in enumerate(raw_names, start=1):
-                    # Check if user flipped the Stop checkbox mid-execution loop
+                    # Gracefully break operations if checkbox gets hit 
                     if stop_pipeline:
                         status_container.write("🛑 **Pipeline manually stopped by user request!**")
                         break
@@ -305,8 +305,8 @@ if submit_button and names_input.strip():
                                 current_row = extract_fields_from_xml(xml_text, name, thesis_id, log_to_terminal)
                                 log_to_terminal(f"✔️ Mapping successful for `{name}`.")
                         
-                        # Save inside persistent app storage
-                        st.session_storage["scraped_rows"].append(current_row)
+                        # Committing entries seamlessly into session memory
+                        st.session_state["scraped_rows"].append(current_row)
 
                     except Exception as item_err:
                         log_to_terminal(f"💥 Pipeline Error: {item_err}")
@@ -315,17 +315,17 @@ if submit_button and names_input.strip():
                             "NON ACCESSIBLE", "NON ACCESSIBLE", "NON ACCESSIBLE",
                             "NON ACCESSIBLE", "NON ACCESSIBLE", "", f"FATAL ERROR: {str(item_err)}"
                         ]
-                        st.session_storage["scraped_rows"].append(error_row)
+                        st.session_state["scraped_rows"].append(error_row)
 
-                    # --- LIVE EXPANDING TABLE DISPLAY UPDATE ---
-                    df_current = pd.DataFrame(st.session_storage["scraped_rows"], columns=columns)
+                    # --- LIVE DATA MATRIX RENDER ENGINE UPDATE ---
+                    df_current = pd.DataFrame(st.session_state["scraped_rows"], columns=columns)
                     table_placeholder.dataframe(df_current, use_container_width=True)
 
-                    # --- IN-MEMORY ZIP BATCH PACKAGING ---
+                    # --- ACTIVE BATCH PACKAGING CONTAINER EXPORT ---
                     if index % BATCH_SIZE == 0 or index == total:
                         start_num = ((index - 1) // BATCH_SIZE) * BATCH_SIZE + 1
-                        end_num = len(st.session_storage["scraped_rows"])
-                        chunk_rows = st.session_storage["scraped_rows"][start_num - 1 : end_num]
+                        end_num = len(st.session_state["scraped_rows"])
+                        chunk_rows = st.session_state["scraped_rows"][start_num - 1 : end_num]
                         
                         if chunk_rows:
                             df_chunk = pd.DataFrame(chunk_rows, columns=columns)
@@ -339,15 +339,13 @@ if submit_button and names_input.strip():
         
         status_container.update(label="🎉 System run finalized.", state="complete", expanded=False)
         
-    # Once finished or stopped, provide download buttons
-    if st.session_storage["scraped_rows"]:
+    # Delivering assets once calculations wrap or stop triggers execute
+    if st.session_state["scraped_rows"]:
         st.success("🏁 Run terminated or completed. Your files are compiled below.")
         
-        # Display the final data structure
-        df_final = pd.DataFrame(st.session_storage["scraped_rows"], columns=columns)
+        df_final = pd.DataFrame(st.session_state["scraped_rows"], columns=columns)
         table_placeholder.dataframe(df_final, use_container_width=True)
         
-        # Immediate active download button
         st.download_button(
             label="📥 Download Extracted CSV Batches (ZIP File)",
             data=zip_buffer.getvalue(),
