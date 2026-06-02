@@ -17,20 +17,17 @@ from selenium.webdriver.support import expected_conditions as EC
 # =====================================================================
 
 def get_driver():
-    """Sets up a headless Chromium driver compatible with Streamlit Cloud."""
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-    
-    # Standard location for Chromium on Streamlit Cloud Debian environment
     options.binary_location = "/usr/bin/chromium"
     return webdriver.Chrome(options=options)
 
 # =====================================================================
-# 2. SCRAPING & UTILITY HELPER FUNCTIONS (YOUR WORKING CODE)
+# 2. SCRAPING & UTILITY HELPER FUNCTIONS
 # =====================================================================
 
 def clean_whitespace(name):
@@ -52,16 +49,14 @@ def split_asked_name(name):
 def get_first_person_id(driver, name, log_callback):
     log_callback(f"🌐 Accessing theses.fr registry for: **{name}**...")
     query = name.replace(" ", "+")
-    search_url = (
-        f"https://theses.fr/resultats?q={query}"
-        "&page=1&nb=10&tri=pertinence&domaine=personnes"
-    )
+    search_url = f"https://theses.fr/resultats?q={query}&page=1&nb=10&tri=pertinence&domaine=personnes"
     driver.get(search_url)
 
-    WebDriverWait(driver, 25).until(
-        EC.presence_of_element_located((By.TAG_NAME, "body"))
-    )
-    time.sleep(3)
+    try:
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        time.sleep(1.5)
+    except:
+        return None
 
     html_source = driver.page_source
     soup = BeautifulSoup(html_source, "html.parser")
@@ -82,15 +77,16 @@ def get_first_person_id(driver, name, log_callback):
     return None
 
 def get_fallback_thesis_id(driver, name, log_callback):
-    log_callback("🔍 *Does not seem to be a completed PhD, trying ongoing PhD strategy...*")
+    log_callback("🔍 *Trying ongoing PhD fallback strategy...*")
     query = name.replace(" ", "+")
     search_url = f"https://theses.fr/resultats?q={query}&page=1&nb=10&tri=pertinence"
     driver.get(search_url)
 
-    WebDriverWait(driver, 25).until(
-        EC.presence_of_element_located((By.TAG_NAME, "body"))
-    )
-    time.sleep(3)
+    try:
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        time.sleep(1.5)
+    except:
+        return None
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     for a in soup.find_all("a", href=True):
@@ -100,20 +96,20 @@ def get_fallback_thesis_id(driver, name, log_callback):
             log_callback(f"📂 **Success:** Tracked active Project ID `[{thesis_id}]`")
             return thesis_id
 
-    log_callback("⚠️ *Warning: No reference matches found on fallback platform search.*")
+    log_callback("⚠️ *Warning: No reference matches found.*")
     return None
 
 def get_thesis_id_from_person_page(driver, person_id, log_callback):
     log_callback(f"📄 Fetching historical links for profile ID: `{person_id}`...")
     person_url = f"https://www.theses.fr/{person_id}"
     driver.get(person_url)
-    WebDriverWait(driver, 25).until(
-        EC.presence_of_element_located((By.TAG_NAME, "body"))
-    )
-    time.sleep(3)
+    try:
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        time.sleep(1.5)
+    except:
+        return None
 
     html = driver.page_source
-
     matches = re.findall(r'"(\d{4}[A-Z0-9]{6,10})"\s*,\s*"Auteur\s*/\s*Autrice"', html) or \
               re.findall(r'"(s\d{6})"\s*,\s*"Auteur\s*/\s*Autrice"', html) or \
               re.findall(r'"(\d{4}[A-Z0-9]{6,10})"', html) or \
@@ -127,33 +123,21 @@ def get_thesis_id_from_person_page(driver, person_id, log_callback):
             log_callback(f"🔗 Connected Profile to Thesis Document: `[{thesis_id}]`")
             return thesis_id
 
-    log_callback("⚠️ *Warning: No internal thesis links mapped to this profile.*")
+    log_callback("⚠️ *Warning: No internal links mapped.*")
     return None
 
 def get_xml_from_thesis_id(thesis_id, log_callback):
     log_callback(f"📡 Connecting to remote XML dataset for `[{thesis_id}]`...")
     xml_url = f"https://theses.fr/api/v1/export/xml/{thesis_id}"
     try:
-        response = requests.get(
-            xml_url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-            timeout=20
-        )
-        if response.status_code != 200:
-            log_callback(f"❌ XML API Error! HTTP Status: {response.status_code}")
+        response = requests.get(xml_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        if response.status_code != 200 or not response.text.strip():
             return None
-        
-        if not response.text or not response.text.strip():
-            log_callback("⚠️ Warning: XML payload came back completely blank.")
-            return None
-            
         return response.text
-    except Exception as e:
-        log_callback(f"❌ Connection timeout/error on XML endpoint: {e}")
+    except:
         return None
 
 def extract_fields_from_xml(xml_text, asked_name, thesis_id, log_callback):
-    log_callback("🧬 Parsing structural XML data trees...")
     soup = BeautifulSoup(xml_text, "xml")
     first_name_asked, last_name_asked = split_asked_name(asked_name)
 
@@ -182,9 +166,7 @@ def extract_fields_from_xml(xml_text, asked_name, thesis_id, log_callback):
                 extracted_full_name = name_tag.get_text(strip=True)
 
     if "," in extracted_full_name:
-        last_name_extracted, first_name_extracted = [
-            x.strip() for x in extracted_full_name.split(",", 1)
-        ]
+        last_name_extracted, first_name_extracted = [x.strip() for x in extracted_full_name.split(",", 1)]
     else:
         name_parts = extracted_full_name.split(" ")
         if len(name_parts) > 1:
@@ -199,7 +181,6 @@ def extract_fields_from_xml(xml_text, asked_name, thesis_id, log_callback):
 
     if date_accepted_tag:
         defense_date = date_accepted_tag.get_text(strip=True)
-        start_date = "NON ACCESSIBLE"
     elif created_tag:
         start_date = created_tag.get_text(strip=True)
         if "T" in start_date:
@@ -229,27 +210,32 @@ def extract_fields_from_xml(xml_text, asked_name, thesis_id, log_callback):
 
 st.set_page_config(page_title="Thesis Extraction Pipeline", layout="wide")
 st.title("🎓 Theses.fr Metadata Extraction Pipeline")
-st.markdown("Paste your targets below. Execution tracking messages will render actively inside logs down below.")
 
-# Use Streamlit Form component to fully suppress Ctrl+Enter submission
+# We manage state so data stays visible if the user presses "Stop"
+if "scraped_rows" not in st.session_storage:
+    st.session_storage["scraped_rows"] = []
+
 with st.form("unlocked_pipeline_form"):
     names_input = st.text_area(
         label="📋 Paste student name directory here (One entry per line)",
         placeholder="Frank Yates\nJean Dupont\nMarie Martin",
-        height=230
+        height=200
     )
     BATCH_SIZE = st.number_input("Batch packaging file split size", min_value=1, max_value=100, value=10)
-    
-    # Custom form submission handle 
     submit_button = st.form_submit_button("🚀 Start Web Scraping Pipeline")
 
+# Add a prominent stop toggle option outside the input form
+stop_pipeline = st.checkbox("🛑 Emergency Stop Processing Loop")
+
 if submit_button and names_input.strip():
+    # Reset storage on a fresh submit
+    st.session_storage["scraped_rows"] = []
+    
     raw_names = [line.strip() for line in names_input.splitlines() if line.strip()]
     total = len(raw_names)
     
     st.info(f"📋 Verification complete: **{total}** targets loaded successfully.")
     
-    rows = []
     columns = [
         "First name asked", "Last name asked",
         "First name extracted", "Last name extracted",
@@ -259,9 +245,11 @@ if submit_button and names_input.strip():
     
     progress_bar = st.progress(0)
     
-    # Active terminal view context loop block
+    # Placeholders for live updates
+    status_msg = st.empty()
+    table_placeholder = st.empty()  # This houses the LIVE expanding table data
+    
     with st.status("🕵️‍♂️ Extraction Engine Activity Terminal...", expanded=True) as status_container:
-        
         status_container.write("Initializing secure cloud browser instance...")
         try:
             driver = get_driver()
@@ -270,95 +258,99 @@ if submit_button and names_input.strip():
             st.error(f"Failed to launch native container driver: {driver_err}")
             st.stop()
         
-        # Byte storage setup for local zip builds
         zip_buffer = io.BytesIO()
         
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             try:
                 for index, raw_name in enumerate(raw_names, start=1):
+                    # Check if user flipped the Stop checkbox mid-execution loop
+                    if stop_pipeline:
+                        status_container.write("🛑 **Pipeline manually stopped by user request!**")
+                        break
+                        
                     name = clean_whitespace(raw_name)
                     progress_bar.progress(index / total)
-                    
                     status_container.write(f"⚙️ **[{index}/{total}] Processing Target:** `{name}`")
                     
-                    # Mapping the functional callbacks inside the Streamlit status engine block
                     def log_to_terminal(msg):
                         status_container.write(msg)
 
                     try:
                         first_asked, last_asked = split_asked_name(name)
                         person_id = get_first_person_id(driver, name, log_to_terminal)
-
                         thesis_id = None
+                        
                         if person_id:
                             thesis_id = get_thesis_id_from_person_page(driver, person_id, log_to_terminal)
-
                         if not thesis_id:
                             thesis_id = get_fallback_thesis_id(driver, name, log_to_terminal)
 
                         if not thesis_id:
-                            log_to_terminal(f"❌ **Result:** Record `{name}` could not be found anywhere on database registry.")
-                            rows.append([
+                            log_to_terminal(f"❌ Record `{name}` could not be found.")
+                            current_row = [
                                 first_asked, last_asked, "NOT FOUND", "NOT FOUND",
                                 "NON ACCESSIBLE", "NON ACCESSIBLE", "NON ACCESSIBLE",
                                 "NON ACCESSIBLE", "NON ACCESSIBLE", "", "NOT FOUND"
-                            ])
+                            ]
                         else:
                             xml_text = get_xml_from_thesis_id(thesis_id, log_to_terminal)
-                            
                             if not xml_text:
-                                log_to_terminal("⚠️ **Result [CASE 3]:** XML stream empty or missing. Annotating tracker row.")
-                                rows.append([
+                                current_row = [
                                     first_asked, last_asked, "NON ACCESSIBLE", "NON ACCESSIBLE",
                                     "NON ACCESSIBLE", "NON ACCESSIBLE", "NON ACCESSIBLE",
                                     "NON ACCESSIBLE", "NON ACCESSIBLE", f"https://theses.fr/{thesis_id}",
                                     "To be verified by hand (Case 3: XML empty)"
-                                ])
+                                ]
                             else:
-                                row = extract_fields_from_xml(xml_text, name, thesis_id, log_to_terminal)
-                                log_to_terminal(f"✔️ **Result:** Mapping completed successfully for `{name}`.")
-                                rows.append(row)
+                                current_row = extract_fields_from_xml(xml_text, name, thesis_id, log_to_terminal)
+                                log_to_terminal(f"✔️ Mapping successful for `{name}`.")
+                        
+                        # Save inside persistent app storage
+                        st.session_storage["scraped_rows"].append(current_row)
 
                     except Exception as item_err:
-                        log_to_terminal(f"💥 **Pipeline Error on Item:** {item_err}")
-                        rows.append([
+                        log_to_terminal(f"💥 Pipeline Error: {item_err}")
+                        error_row = [
                             first_asked, last_asked, "ERROR", str(item_err),
                             "NON ACCESSIBLE", "NON ACCESSIBLE", "NON ACCESSIBLE",
                             "NON ACCESSIBLE", "NON ACCESSIBLE", "", f"FATAL ERROR: {str(item_err)}"
-                        ])
+                        ]
+                        st.session_storage["scraped_rows"].append(error_row)
 
-                    # --- LIVE IN-MEMORY ZIP PACKAGING (EVERY BATCH INTERVAL) ---
+                    # --- LIVE EXPANDING TABLE DISPLAY UPDATE ---
+                    df_current = pd.DataFrame(st.session_storage["scraped_rows"], columns=columns)
+                    table_placeholder.dataframe(df_current, use_container_width=True)
+
+                    # --- IN-MEMORY ZIP BATCH PACKAGING ---
                     if index % BATCH_SIZE == 0 or index == total:
                         start_num = ((index - 1) // BATCH_SIZE) * BATCH_SIZE + 1
-                        end_num = index
-                        chunk_rows = rows[start_num - 1 : end_num]
+                        end_num = len(st.session_storage["scraped_rows"])
+                        chunk_rows = st.session_storage["scraped_rows"][start_num - 1 : end_num]
                         
-                        df_chunk = pd.DataFrame(chunk_rows, columns=columns)
-                        csv_data = df_chunk.to_csv(index=False).encode('utf-8')
-                        
-                        filename = f"extracted {start_num}-{end_num}.csv"
-                        zip_file.writestr(filename, csv_data)
-                        st.toast(f"📦 Packed batch package container: {filename}")
+                        if chunk_rows:
+                            df_chunk = pd.DataFrame(chunk_rows, columns=columns)
+                            csv_data = df_chunk.to_csv(index=False).encode('utf-8')
+                            filename = f"extracted {start_num}-{end_num}.csv"
+                            zip_file.writestr(filename, csv_data)
 
             finally:
-                status_container.write("🔒 Terminating secure background driver pipeline context...")
+                status_container.write("🔒 Terminating driver pipeline context...")
                 driver.quit()
         
-        status_container.update(label="🎉 Target run complete! Logs archived.", state="complete", expanded=False)
+        status_container.update(label="🎉 System run finalized.", state="complete", expanded=False)
         
-    st.success("🏆 Extraction completely compiled!")
-    
-    # Render Master DataFrame on screen
-    df_all = pd.DataFrame(rows, columns=columns)
-    st.dataframe(df_all, use_container_width=True)
-    
-    # Download Button trigger
-    st.download_button(
-        label="📥 Download Extracted CSV Batches (ZIP File)",
-        data=zip_buffer.getvalue(),
-        file_name="theses_extracted_batches.zip",
-        mime="application/zip"
-    )
-
-elif submit_button:
-    st.warning("👈 Please supply valid text inputs inside the layout box before activating script processes.")
+    # Once finished or stopped, provide download buttons
+    if st.session_storage["scraped_rows"]:
+        st.success("🏁 Run terminated or completed. Your files are compiled below.")
+        
+        # Display the final data structure
+        df_final = pd.DataFrame(st.session_storage["scraped_rows"], columns=columns)
+        table_placeholder.dataframe(df_final, use_container_width=True)
+        
+        # Immediate active download button
+        st.download_button(
+            label="📥 Download Extracted CSV Batches (ZIP File)",
+            data=zip_buffer.getvalue(),
+            file_name="theses_extracted_batches.zip",
+            mime="application/zip"
+        )
