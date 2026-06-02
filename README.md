@@ -1,6 +1,6 @@
 # 🎓 Theses.fr Metadata Extraction Pipeline
 
-An automated web scraping application built with **Streamlit** and **Selenium WebDriver** designed to extract researcher profiles and thesis metadata from the official French thesis registry ([theses.fr](https://theses.fr)). 
+An automated web scraping application built with **Streamlit** and **Selenium WebDriver** designed to extract researcher profiles and thesis metadata from the official French thesis registry 
 
 This pipeline takes a raw list of student/researcher names, performs real-time browser automation searches, extracts structured XML metadata payloads, and provides partitioned batch downlinks for easy data manipulation.
 
