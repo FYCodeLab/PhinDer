@@ -3,13 +3,7 @@ import pandas as pd
 import requests
 import unicodedata
 import re
-import io
-import zipfile
 import time
-
-# ============================================================
-# CONFIG
-# ============================================================
 
 BASE_URL = "https://theses.fr/api/v1/theses/recherche/"
 
@@ -29,53 +23,29 @@ COLUMNS = [
     "Pipeline Status Tracking"
 ]
 
-# ============================================================
-# HELPERS
-# ============================================================
-
 def normalize(s):
     s = str(s).strip().lower()
     s = unicodedata.normalize("NFKD", s)
-    s = "".join(c for c in s if not unicodedata.combining(c))
-    return s
-
+    return "".join(c for c in s if not unicodedata.combining(c))
 
 def clean_whitespace(name):
     return re.sub(r"\s+", " ", name).strip()
 
-
 def split_asked_name(name):
     parts = name.split()
-
     if len(parts) == 1:
         return parts[0], ""
-
     return " ".join(parts[:-1]), parts[-1]
 
-
-def search_theses(name, log):
-    log(f"Calling theses.fr API for: `{name}`")
-
+def search_theses(name):
     r = requests.get(
         BASE_URL,
-        params={
-            "q": f'"{name}"',
-            "nombre": 100
-        },
+        params={"q": f'"{name}"', "nombre": 100},
         headers={"User-Agent": "Mozilla/5.0"},
         timeout=30
     )
-
     r.raise_for_status()
-    data = r.json()
-
-    theses = data.get("theses", [])
-
-    log(f"API total hits: **{data.get('totalHits', 'unknown')}**")
-    log(f"Candidate records downloaded: **{len(theses)}**")
-
-    return theses
-
+    return r.json()
 
 def is_author(thesis, first_asked, last_asked):
     target = normalize(f"{first_asked} {last_asked}")
@@ -83,7 +53,6 @@ def is_author(thesis, first_asked, last_asked):
     for a in thesis.get("auteurs", []):
         first = a.get("prenom", "")
         last = a.get("nom", "")
-
         full = normalize(f"{first} {last}")
 
         if target == full or target in full:
@@ -91,16 +60,13 @@ def is_author(thesis, first_asked, last_asked):
 
     return None, None
 
-
 def extract_doctoral_school(thesis):
     value = "; ".join(
         ed.get("nom", "")
         for ed in thesis.get("ecolesDoctorale", [])
         if ed.get("nom")
     )
-
     return value or "NON ACCESSIBLE"
-
 
 def extract_organization(thesis):
     value = "; ".join(
@@ -108,9 +74,7 @@ def extract_organization(thesis):
         for p in thesis.get("partenairesDeRecherche", [])
         if p.get("nom")
     )
-
     return value or "NON ACCESSIBLE"
-
 
 def extract_row(name, thesis, first_extracted, last_extracted):
     first_asked, last_asked = split_asked_name(name)
@@ -132,10 +96,10 @@ def extract_row(name, thesis, first_extracted, last_extracted):
         "SUCCESS"
     ]
 
-
-def process_name(name, log):
+def process_name(name):
     first_asked, last_asked = split_asked_name(name)
-    theses = search_theses(name, log)
+    data = search_theses(name)
+    theses = data.get("theses", [])
 
     rows = []
 
@@ -173,23 +137,10 @@ def process_name(name, log):
             "NO AUTHOR THESIS FOUND"
         ])
 
-    return rows
-
-
-def make_zip_from_chunks(chunk_files):
-    zip_buffer = io.BytesIO()
-
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for filename, df_chunk in chunk_files:
-            csv_data = df_chunk.to_csv(index=False).encode("utf-8-sig")
-            zip_file.writestr(filename, csv_data)
-
-    zip_buffer.seek(0)
-    return zip_buffer
-
+    return rows, data.get("totalHits", 0), len(theses)
 
 # ============================================================
-# STREAMLIT UI
+# STREAMLIT APP
 # ============================================================
 
 st.set_page_config(
@@ -198,18 +149,17 @@ st.set_page_config(
 )
 
 st.title("Theses.fr API Extraction")
-st.caption("API-only version. No Selenium, no scraping, no XML parsing.")
+st.caption("Paste names, run the extraction, and watch the table fill live.")
 
-with st.sidebar:
-    st.header("Settings")
+names_input = st.text_area(
+    "Names, one per line",
+    placeholder="Frank Yates\nHéloïse Castiglione\nThomas Lemonnier\nIsabel Calvente",
+    height=220
+)
 
-    batch_size = st.number_input(
-        "Chunk size",
-        min_value=1,
-        max_value=100,
-        value=10
-    )
+col_a, col_b = st.columns([1, 1])
 
+with col_a:
     sleep_time = st.number_input(
         "Pause between API calls, seconds",
         min_value=0.0,
@@ -218,27 +168,18 @@ with st.sidebar:
         step=0.1
     )
 
-    st.markdown("Files will be named:")
-    st.code("these_1-10.csv\nthese_11-20.csv\nthese_ALL.csv")
-
-names_input = st.text_area(
-    "Paste names, one per line",
-    placeholder="Frank Yates\nHéloïse Castiglione\nThomas Lemonnier\nIsabel Calvente",
-    height=220
-)
+with col_b:
+    show_not_found = st.checkbox(
+        "Keep NOT FOUND rows",
+        value=True
+    )
 
 start_button = st.button("Start extraction", type="primary")
 
 if "rows" not in st.session_state:
     st.session_state.rows = []
 
-if "chunk_files" not in st.session_state:
-    st.session_state.chunk_files = []
-
 if start_button:
-
-    st.session_state.rows = []
-    st.session_state.chunk_files = []
 
     raw_names = [
         clean_whitespace(line)
@@ -250,130 +191,122 @@ if start_button:
         st.error("No names provided.")
         st.stop()
 
+    st.session_state.rows = []
+
     total = len(raw_names)
 
-    st.info(f"{total} name(s) loaded.")
+    progress_bar = st.progress(0)
 
-    progress = st.progress(0)
-    metrics_area = st.empty()
-    table_area = st.empty()
-    log_area = st.container()
+    metric_1, metric_2, metric_3, metric_4 = st.columns(4)
 
-    current_batch_rows = []
-    current_batch_start = 1
+    current_placeholder = st.empty()
+    log_placeholder = st.empty()
+    table_placeholder = st.empty()
 
-    with st.status("Extraction running", expanded=True) as status:
+    logs = []
 
-        def log(msg):
-            status.write(msg)
+    for index, name in enumerate(raw_names, start=1):
 
-        for index, name in enumerate(raw_names, start=1):
+        progress_bar.progress(index / total)
 
-            progress.progress(index / total)
-
-            log("")
-            log("=" * 60)
-            log(f"Processing **{index}/{total}**: `{name}`")
-
-            try:
-                person_rows = process_name(name, log)
-
-                st.session_state.rows.extend(person_rows)
-                current_batch_rows.extend(person_rows)
-
-                successes = sum(
-                    1 for row in person_rows
-                    if row[-1] == "SUCCESS"
-                )
-
-                log(f"Rows added: **{len(person_rows)}**")
-                log(f"Successful thesis rows: **{successes}**")
-
-            except Exception as e:
-                first, last = split_asked_name(name)
-
-                error_row = [
-                    first,
-                    last,
-                    "ERROR",
-                    "ERROR",
-                    "NON ACCESSIBLE",
-                    "NON ACCESSIBLE",
-                    "NON ACCESSIBLE",
-                    "NON ACCESSIBLE",
-                    "NON ACCESSIBLE",
-                    "NON ACCESSIBLE",
-                    "",
-                    "NON ACCESSIBLE",
-                    f"ERROR: {e}"
-                ]
-
-                st.session_state.rows.append(error_row)
-                current_batch_rows.append(error_row)
-
-                log(f"Error: `{e}`")
-
-            df_current = pd.DataFrame(st.session_state.rows, columns=COLUMNS)
-
-            table_area.dataframe(
-                df_current,
-                use_container_width=True,
-                height=420
-            )
-
-            metrics_area.metric(
-                label="Rows collected so far",
-                value=len(df_current)
-            )
-
-            if index % batch_size == 0 or index == total:
-                chunk_start = current_batch_start
-                chunk_end = index
-
-                chunk_filename = f"these_{chunk_start}-{chunk_end}.csv"
-
-                df_chunk = pd.DataFrame(
-                    current_batch_rows,
-                    columns=COLUMNS
-                )
-
-                st.session_state.chunk_files.append(
-                    (chunk_filename, df_chunk)
-                )
-
-                log(f"Saved chunk in memory: `{chunk_filename}`")
-                log(f"Rows in chunk: **{len(df_chunk)}**")
-
-                current_batch_rows = []
-                current_batch_start = index + 1
-
-            time.sleep(sleep_time)
-
-        status.update(
-            label="Extraction finished",
-            state="complete",
-            expanded=False
+        current_placeholder.info(
+            f"Currently processing {index}/{total}: {name}"
         )
 
-    df_final = pd.DataFrame(st.session_state.rows, columns=COLUMNS)
+        try:
+            rows, total_hits, downloaded = process_name(name)
 
-    st.success("Extraction completed.")
+            if not show_not_found:
+                rows = [
+                    r for r in rows
+                    if r[-1] == "SUCCESS"
+                ]
 
-    st.subheader("Final table")
-    st.dataframe(df_final, use_container_width=True, height=500)
+            st.session_state.rows.extend(rows)
 
-    st.download_button(
-        "Download these_ALL.csv",
-        data=df_final.to_csv(index=False).encode("utf-8-sig"),
-        file_name="these_ALL.csv",
-        mime="text/csv"
+            success_count = sum(
+                1 for r in rows
+                if r[-1] == "SUCCESS"
+            )
+
+            logs.append(
+                f"{index}/{total} | {name} | API hits: {total_hits} | downloaded: {downloaded} | added: {len(rows)} | success: {success_count}"
+            )
+
+        except Exception as e:
+            first, last = split_asked_name(name)
+
+            error_row = [
+                first,
+                last,
+                "ERROR",
+                "ERROR",
+                "NON ACCESSIBLE",
+                "NON ACCESSIBLE",
+                "NON ACCESSIBLE",
+                "NON ACCESSIBLE",
+                "NON ACCESSIBLE",
+                "NON ACCESSIBLE",
+                "",
+                "NON ACCESSIBLE",
+                f"ERROR: {e}"
+            ]
+
+            st.session_state.rows.append(error_row)
+
+            logs.append(
+                f"{index}/{total} | {name} | ERROR: {e}"
+            )
+
+        df_current = pd.DataFrame(
+            st.session_state.rows,
+            columns=COLUMNS
+        )
+
+        with metric_1:
+            st.metric("Processed", index)
+
+        with metric_2:
+            st.metric("Total", total)
+
+        with metric_3:
+            st.metric("Rows", len(df_current))
+
+        with metric_4:
+            st.metric(
+                "Success rows",
+                len(df_current[df_current["Pipeline Status Tracking"] == "SUCCESS"])
+                if not df_current.empty else 0
+            )
+
+        log_placeholder.code("\n".join(logs[-12:]))
+
+        table_placeholder.dataframe(
+            df_current,
+            use_container_width=True,
+            height=520
+        )
+
+        time.sleep(sleep_time)
+
+    current_placeholder.success("Extraction completed.")
+
+    df_final = pd.DataFrame(
+        st.session_state.rows,
+        columns=COLUMNS
     )
 
-    zip_buffer = make_zip_from_chunks(st.session_state.chunk_files)
+    st.subheader("Final results")
+
+    st.dataframe(
+        df_final,
+        use_container_width=True,
+        height=700
+    )
 
     st.download_button(
-        "Download chunked CSV files as ZIP",
-        data=zip_buffer.getvalue(),
-        file_name="these_chunks.zip",
-        mime="application/zip"
+        "Download results as CSV",
+        data=df_final.to_csv(index=False).encode("utf-8-sig"),
+        file_name="these_results.csv",
+        mime="text/csv"
     )
