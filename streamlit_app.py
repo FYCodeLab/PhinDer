@@ -179,10 +179,11 @@ st.title("Theses.fr API Extraction")
 st.caption("Paste names, run extraction, and watch the table fill live.")
 
 with st.sidebar:
+
     st.header("Settings")
 
     sleep_time = st.number_input(
-        "Pause between API calls, seconds",
+        "Pause between API calls (seconds)",
         min_value=0.0,
         max_value=5.0,
         value=0.2,
@@ -190,13 +191,9 @@ with st.sidebar:
     )
 
     show_not_found = st.checkbox(
-        "Keep NOT FOUND rows",
+        "Show NOT FOUND entries",
         value=True
     )
-
-    st.markdown("---")
-    st.markdown("Required files:")
-    st.code("streamlit_app.py\nrequirements.txt")
 
 names_input = st.text_area(
     "Names, one per line",
