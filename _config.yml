@@ -1,6 +1,3 @@
 title: PROJECTNAME
 
-remote_theme: cryptonym0/jekyll-theme-neubrutalism
-
-plugins:
-  - jekyll-remote-theme
+theme: jekyll-theme-midnight
