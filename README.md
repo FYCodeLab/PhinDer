@@ -8,7 +8,8 @@ This pipeline takes a raw list of student/researcher names, performs real-time b
 
 ## 🚀 Live Demo
 The application is configured for deployment and can be accessed on **Streamlit Community Cloud** via your deployment URL.
-Note: it may take a couple of minutes to load Streamlit : be patient !
+Note: it may take a couple of minutes to load Streamlit : be patient ! \
+
 [![Phinder App](https://img.shields.io/badge/Phinder-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://phinder.streamlit.app/)
 
 ---
