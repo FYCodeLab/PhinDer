@@ -197,7 +197,7 @@ with st.sidebar:
 
 names_input = st.text_area(
     "Names, one per line",
-    placeholder="Frank Yates\nHéloïse Castiglione\nThomas Lemonnier\nIsabel Calvente",
+    placeholder="John Doe\nJane Doe\nPaul Dupont\nLaurence Martin",
     height=240
 )
 
