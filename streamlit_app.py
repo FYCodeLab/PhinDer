@@ -8,7 +8,6 @@ import time
 BASE_URL = "https://theses.fr/api/v1/theses/recherche/"
 
 COLUMNS = [
-    "PROMO",
     "Last Name in file",
     "First Name in file",
     "Last Name in Theses.fr (Auteur)",
@@ -28,32 +27,44 @@ COLUMNS = [
     "Pipeline Status Tracking"
 ]
 
+
 def normalize(s):
     s = str(s).strip().lower()
     s = unicodedata.normalize("NFKD", s)
     return "".join(c for c in s if not unicodedata.combining(c))
 
+
 def clean_whitespace(name):
     return re.sub(r"\s+", " ", str(name)).strip()
 
+
 def split_asked_name(name):
     parts = clean_whitespace(name).split()
+
     if len(parts) == 1:
         return "", parts[0]
+
     return parts[0], " ".join(parts[1:])
+
 
 def safe(value):
     return value if value not in [None, "", []] else "NON ACCESSIBLE"
 
+
 def search_theses(full_name):
     r = requests.get(
         BASE_URL,
-        params={"q": f'"{full_name}"', "nombre": 100},
+        params={
+            "q": f'"{full_name}"',
+            "nombre": 100
+        },
         headers={"User-Agent": "Mozilla/5.0"},
         timeout=30
     )
+
     r.raise_for_status()
     return r.json()
+
 
 def is_author(thesis, first_asked, last_asked):
     target = normalize(f"{first_asked} {last_asked}")
@@ -61,6 +72,7 @@ def is_author(thesis, first_asked, last_asked):
     for a in thesis.get("auteurs", []):
         first = a.get("prenom", "")
         last = a.get("nom", "")
+
         full = normalize(f"{first} {last}")
 
         if target == full or target in full:
@@ -71,9 +83,11 @@ def is_author(thesis, first_asked, last_asked):
                 or a.get("personneId")
                 or "NON ACCESSIBLE"
             )
+
             return first, last, author_id
 
     return None, None, None
+
 
 def extract_doctoral_school(thesis):
     value = "; ".join(
@@ -81,7 +95,9 @@ def extract_doctoral_school(thesis):
         for ed in thesis.get("ecolesDoctorale", [])
         if ed.get("nom")
     )
+
     return value or "NON ACCESSIBLE"
+
 
 def extract_laboratory(thesis):
     labs = []
@@ -89,7 +105,12 @@ def extract_laboratory(thesis):
     for p in thesis.get("partenairesDeRecherche", []):
         nom = p.get("nom", "")
         typ = normalize(p.get("type", ""))
-        if nom and ("laboratoire" in typ or "unite" in typ or "research" in typ):
+
+        if nom and (
+            "laboratoire" in typ
+            or "unite" in typ
+            or "research" in typ
+        ):
             labs.append(nom)
 
     if not labs:
@@ -101,18 +122,26 @@ def extract_laboratory(thesis):
 
     return "; ".join(labs) if labs else "NON ACCESSIBLE"
 
+
 def extract_directors(thesis):
     directors = []
 
     for key in ["directeursThese", "directeurs", "directeurThese"]:
-        for d in thesis.get(key, []):
+        value = thesis.get(key, [])
+
+        if isinstance(value, dict):
+            value = [value]
+
+        for d in value:
             first = d.get("prenom", "")
             last = d.get("nom", "")
             full = clean_whitespace(f"{first} {last}")
+
             if full:
                 directors.append(full)
 
     return "; ".join(directors) if directors else "NON ACCESSIBLE"
+
 
 def extract_city(thesis):
     for key in ["ville", "villeSoutenance", "etabSoutenanceVille"]:
@@ -120,10 +149,12 @@ def extract_city(thesis):
             return thesis.get(key)
 
     etab = thesis.get("etablissementSoutenance", {})
+
     if isinstance(etab, dict):
         return etab.get("ville", "NON ACCESSIBLE")
 
     return "NON ACCESSIBLE"
+
 
 def extract_discipline(thesis):
     value = thesis.get("discipline") or thesis.get("disciplineThese")
@@ -133,12 +164,12 @@ def extract_discipline(thesis):
 
     return value or "NON ACCESSIBLE"
 
-def extract_row(promo, last_file, first_file, thesis, first_author, last_author, author_id):
+
+def extract_row(last_file, first_file, thesis, first_author, last_author, author_id):
     thesis_id = thesis.get("id", "")
     thesis_url = f"https://www.theses.fr/{thesis_id}" if thesis_id else ""
 
     return [
-        safe(promo),
         safe(last_file),
         safe(first_file),
         safe(last_author),
@@ -158,8 +189,10 @@ def extract_row(promo, last_file, first_file, thesis, first_author, last_author,
         "SUCCESS"
     ]
 
-def process_person(promo, last_file, first_file):
+
+def process_person(last_file, first_file):
     full_name = clean_whitespace(f"{first_file} {last_file}")
+
     data = search_theses(full_name)
     theses = data.get("theses", [])
 
@@ -175,7 +208,6 @@ def process_person(promo, last_file, first_file):
         if first_author:
             rows.append(
                 extract_row(
-                    promo,
                     last_file,
                     first_file,
                     thesis,
@@ -187,7 +219,6 @@ def process_person(promo, last_file, first_file):
 
     if not rows:
         rows.append([
-            safe(promo),
             safe(last_file),
             safe(first_file),
             "NOT FOUND",
@@ -209,40 +240,6 @@ def process_person(promo, last_file, first_file):
 
     return rows, data.get("totalHits", 0), len(theses)
 
-def read_uploaded_file(uploaded_file):
-    if uploaded_file.name.endswith(".csv"):
-        return pd.read_csv(uploaded_file)
-
-    if uploaded_file.name.endswith((".xlsx", ".xls")):
-        return pd.read_excel(uploaded_file)
-
-    raise ValueError("Unsupported file format. Use CSV or Excel.")
-
-def standardize_input_df(df):
-    df.columns = [clean_whitespace(c) for c in df.columns]
-
-    promo_col = next((c for c in df.columns if normalize(c) in ["promo", "promotion"]), None)
-    last_col = next((c for c in df.columns if "last" in normalize(c) or "nom" == normalize(c)), None)
-    first_col = next((c for c in df.columns if "first" in normalize(c) or "prenom" == normalize(c)), None)
-
-    if not last_col or not first_col:
-        raise ValueError("File must contain columns for first name and last name.")
-
-    rows = []
-
-    for _, r in df.iterrows():
-        promo = r[promo_col] if promo_col else ""
-        last = clean_whitespace(r[last_col])
-        first = clean_whitespace(r[first_col])
-
-        if first or last:
-            rows.append({
-                "PROMO": promo,
-                "Last Name in file": last,
-                "First Name in file": first
-            })
-
-    return rows
 
 st.set_page_config(
     page_title="Phinder",
@@ -278,42 +275,34 @@ with st.sidebar:
         value=True
     )
 
-uploaded_file = st.file_uploader(
-    "Upload CSV or Excel file",
-    type=["csv", "xlsx", "xls"]
-)
 
 names_input = st.text_area(
-    "Or paste names manually, one per line",
+    "Names, one per line",
     placeholder="John Doe\nJane Doe\nPaul Dupont",
-    height=180
+    height=240
 )
 
-start_button = st.button("Start extraction", type="primary")
+start_button = st.button(
+    "Start extraction",
+    type="primary"
+)
+
 
 if start_button:
 
     input_rows = []
 
-    if uploaded_file:
-        try:
-            df_input = read_uploaded_file(uploaded_file)
-            input_rows = standardize_input_df(df_input)
-        except Exception as e:
-            st.error(f"Input file error: {e}")
-            st.stop()
-
-    elif names_input.strip():
+    if names_input.strip():
         for line in names_input.splitlines():
             name = clean_whitespace(line)
+
             if name:
                 first, last = split_asked_name(name)
+
                 input_rows.append({
-                    "PROMO": "",
                     "Last Name in file": last,
                     "First Name in file": first
                 })
-
     else:
         st.error("No names provided.")
         st.stop()
@@ -332,21 +321,23 @@ if start_button:
         log_box = st.empty()
 
     table_box = st.empty()
+
     start_time = time.time()
 
     for index, person in enumerate(input_rows, start=1):
 
-        promo = person["PROMO"]
         last_file = person["Last Name in file"]
         first_file = person["First Name in file"]
-        display_name = f"{first_file} {last_file}"
+        display_name = clean_whitespace(f"{first_file} {last_file}")
 
         progress_bar.progress(index / total)
-        status_box.info(f"Processing {index}/{total} — {display_name}")
+
+        status_box.info(
+            f"Processing {index}/{total} — {display_name}"
+        )
 
         try:
             person_rows, total_hits, downloaded = process_person(
-                promo,
                 last_file,
                 first_file
             )
@@ -370,7 +361,6 @@ if start_button:
 
         except Exception as e:
             all_rows.append([
-                safe(promo),
                 safe(last_file),
                 safe(first_file),
                 "ERROR",
@@ -390,14 +380,25 @@ if start_button:
                 f"ERROR: {e}"
             ])
 
-            logs.append(f"✗ {display_name} | ERROR: {e}")
+            logs.append(
+                f"✗ {display_name} | ERROR: {e}"
+            )
 
-        df_current = pd.DataFrame(all_rows, columns=COLUMNS)
+        df_current = pd.DataFrame(
+            all_rows,
+            columns=COLUMNS
+        )
+
         elapsed = round(time.time() - start_time, 1)
 
-        success_total = len(
-            df_current[df_current["Pipeline Status Tracking"] == "SUCCESS"]
-        ) if not df_current.empty else 0
+        if not df_current.empty:
+            success_total = len(
+                df_current[
+                    df_current["Pipeline Status Tracking"] == "SUCCESS"
+                ]
+            )
+        else:
+            success_total = 0
 
         summary_box.markdown(
             f"""
@@ -408,7 +409,10 @@ if start_button:
 """
         )
 
-        log_box.code("\n".join(logs[-20:]), language=None)
+        log_box.code(
+            "\n".join(logs[-20:]),
+            language=None
+        )
 
         table_box.dataframe(
             df_current,
@@ -419,11 +423,18 @@ if start_button:
         time.sleep(sleep_time)
 
     progress_bar.progress(1.0)
-    status_box.success(f"Completed — {total} names processed")
 
-    df_final = pd.DataFrame(all_rows, columns=COLUMNS)
+    status_box.success(
+        f"Completed — {total} names processed"
+    )
+
+    df_final = pd.DataFrame(
+        all_rows,
+        columns=COLUMNS
+    )
 
     st.divider()
+
     st.subheader("Final results")
 
     st.dataframe(
