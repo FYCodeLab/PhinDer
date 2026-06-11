@@ -8,10 +8,10 @@ import time
 BASE_URL = "https://theses.fr/api/v1/theses/recherche/"
 
 COLUMNS = [
-    "Last Name in file",
     "First Name in file",
-    "Last Name in Theses.fr (Auteur)",
+    "Last Name in file",
     "First Name in Theses.fr (Auteur)",
+    "Last Name in Theses.fr (Auteur)",
     "Identifiant auteur",
     "Titre",
     "Nom du Directeur de these",
@@ -42,7 +42,7 @@ def split_asked_name(name):
     parts = clean_whitespace(name).split()
 
     if len(parts) == 1:
-        return "", parts[0]
+        return parts[0], ""
 
     return parts[0], " ".join(parts[1:])
 
@@ -72,7 +72,6 @@ def is_author(thesis, first_asked, last_asked):
     for a in thesis.get("auteurs", []):
         first = a.get("prenom", "")
         last = a.get("nom", "")
-
         full = normalize(f"{first} {last}")
 
         if target == full or target in full:
@@ -165,15 +164,15 @@ def extract_discipline(thesis):
     return value or "NON ACCESSIBLE"
 
 
-def extract_row(last_file, first_file, thesis, first_author, last_author, author_id):
+def extract_row(first_file, last_file, thesis, first_author, last_author, author_id):
     thesis_id = thesis.get("id", "")
     thesis_url = f"https://www.theses.fr/{thesis_id}" if thesis_id else ""
 
     return [
-        safe(last_file),
         safe(first_file),
-        safe(last_author),
+        safe(last_file),
         safe(first_author),
+        safe(last_author),
         safe(author_id),
         safe(thesis.get("titrePrincipal")),
         extract_directors(thesis),
@@ -190,7 +189,7 @@ def extract_row(last_file, first_file, thesis, first_author, last_author, author
     ]
 
 
-def process_person(last_file, first_file):
+def process_person(first_file, last_file):
     full_name = clean_whitespace(f"{first_file} {last_file}")
 
     data = search_theses(full_name)
@@ -208,8 +207,8 @@ def process_person(last_file, first_file):
         if first_author:
             rows.append(
                 extract_row(
-                    last_file,
                     first_file,
+                    last_file,
                     thesis,
                     first_author,
                     last_author,
@@ -219,8 +218,8 @@ def process_person(last_file, first_file):
 
     if not rows:
         rows.append([
-            safe(last_file),
             safe(first_file),
+            safe(last_file),
             "NOT FOUND",
             "NOT FOUND",
             "NON ACCESSIBLE",
@@ -300,8 +299,8 @@ if start_button:
                 first, last = split_asked_name(name)
 
                 input_rows.append({
-                    "Last Name in file": last,
-                    "First Name in file": first
+                    "First Name in file": first,
+                    "Last Name in file": last
                 })
     else:
         st.error("No names provided.")
@@ -326,8 +325,8 @@ if start_button:
 
     for index, person in enumerate(input_rows, start=1):
 
-        last_file = person["Last Name in file"]
         first_file = person["First Name in file"]
+        last_file = person["Last Name in file"]
         display_name = clean_whitespace(f"{first_file} {last_file}")
 
         progress_bar.progress(index / total)
@@ -338,8 +337,8 @@ if start_button:
 
         try:
             person_rows, total_hits, downloaded = process_person(
-                last_file,
-                first_file
+                first_file,
+                last_file
             )
 
             if not show_not_found:
@@ -361,8 +360,8 @@ if start_button:
 
         except Exception as e:
             all_rows.append([
-                safe(last_file),
                 safe(first_file),
+                safe(last_file),
                 "ERROR",
                 "ERROR",
                 "NON ACCESSIBLE",
@@ -391,14 +390,11 @@ if start_button:
 
         elapsed = round(time.time() - start_time, 1)
 
-        if not df_current.empty:
-            success_total = len(
-                df_current[
-                    df_current["Pipeline Status Tracking"] == "SUCCESS"
-                ]
-            )
-        else:
-            success_total = 0
+        success_total = len(
+            df_current[
+                df_current["Pipeline Status Tracking"] == "SUCCESS"
+            ]
+        ) if not df_current.empty else 0
 
         summary_box.markdown(
             f"""
